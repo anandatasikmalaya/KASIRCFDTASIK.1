@@ -312,7 +312,7 @@
 
         #receipt-area, #return-receipt-area { display: none; }
 
-        /* --- STYLE CETAK STRUK PRESISI UNTUK PRINTER THERMAL 58mm --- */
+        /* --- STYLE CETAK STRUK PRESISI UNTUK PRINTER THERMAL 58mm / DOT MATRIX --- */
         @page {
             size: auto;
             margin: 0mm;
@@ -851,13 +851,12 @@
         /* --- LOGIKA WEB SERIAL API UNTUK PRINTER ESC/POS RAW TEXT --- */
         async function connectSerialPrinter() {
             if (!("serial" in navigator)) {
-                alert("Browser Anda belum mendukung Web Serial API. Gunakan Chrome atau Edge!");
+                alert("Browser Anda belum mendukung Web Serial API. Gunakan Chrome atau Edge di Laptop/PC!");
                 return;
             }
 
             try {
                 serialPort = await navigator.serial.requestPort();
-                // 9600 Baudrate umum untuk adapter USB-to-Serial / Thermal / Dot Matrix Serial Printer
                 await serialPort.open({ baudRate: 9600 });
                 serialWriter = serialPort.writable.getWriter();
 
@@ -875,7 +874,6 @@
 
         async function printRawEscPos(rawDataString) {
             if (!serialPort || !serialWriter) {
-                // Fallback ke window.print jika serial printer tidak terkoneksi
                 return false;
             }
 
@@ -892,31 +890,22 @@
 
         function buildEscPosReceiptText(trx, isRetur = false) {
             const ESC = "\x1B";
-            const GS = "\x1D";
-
             let raw = "";
 
-            // Inisialisasi Printer
             raw += ESC + "@";
-            // Set ke Font Draft / Font Bawaan Printer agar cetak cepat
             raw += ESC + "M" + "\x00"; 
-
-            // Kick Cash Drawer
             raw += ESC + "p" + "\x00" + "\x19" + "\xFA";
 
-            // Align Center
             raw += ESC + "a" + "\x01";
             raw += "STAND ANANDA\n";
             raw += (isRetur ? "STRUK RETUR PENUKARAN" : "Struk Pembayaran") + "\n";
             raw += "--------------------------------\n";
 
-            // Align Left
             raw += ESC + "a" + "\x00";
             raw += "Kasir: " + (trx.cashier || '-') + "\n";
             raw += "Tgl  : " + trx.date + "\n";
             raw += "--------------------------------\n";
 
-            // Render Item Retur
             if (isRetur && trx.returnedItems) {
                 raw += "[RETUR DIKEMBALIKAN]\n";
                 trx.returnedItems.forEach(item => {
@@ -933,7 +922,6 @@
                 raw += "[BARANG PENGGANTI]\n";
             }
 
-            // Render Item Belanja
             trx.items.forEach(item => {
                 const origSubtotal = item.price * item.qty;
                 const disc = parseFloat(item.discountValue) || 0;
@@ -954,7 +942,6 @@
 
             raw += "--------------------------------\n";
 
-            // Total / Bayar / Kembali
             let totalVal = "Rp " + (trx.total || 0).toLocaleString('id-ID');
             let payVal = "Rp " + (trx.pay || 0).toLocaleString('id-ID');
             let changeVal = "Rp " + (trx.change || 0).toLocaleString('id-ID');
@@ -964,12 +951,9 @@
             raw += "Kembali: " + changeVal.padStart(23, " ") + "\n";
             raw += "--------------------------------\n";
 
-            // Align Center Footer
             raw += ESC + "a" + "\x01";
             raw += "--- Terima Kasih ---\n";
             raw += "Selamat Berbelanja Kembali\n\n\n\n";
-
-            // Paper Feed & Cut / Line Feeds
             raw += ESC + "d" + "\x05";
 
             return raw;
@@ -1831,58 +1815,62 @@
         }
 
         async function populateAndPrintReceipt(trx, isRetur = false) {
-            // Cobalah untuk cetak lewat Web Serial API (ESC/POS Raw)
-            const rawText = buildEscPosReceiptText(trx, isRetur);
-            const printedViaSerial = await printRawEscPos(rawText);
+            // 1. Selalu isi elemen HTML struk terlebih dahulu untuk browser print
+            document.getElementById('rCashier').innerText = trx.cashier || '-';
+            document.getElementById('rDate').innerText = trx.date;
+            document.getElementById('rTypeTitle').innerText = isRetur ? "STRUK RETUR PENUKARAN" : "Struk Pembayaran";
 
-            if (!printedViaSerial) {
-                // Jika printer serial belum tersambung, gunakan window.print() biasa
-                document.getElementById('rCashier').innerText = trx.cashier || '-';
-                document.getElementById('rDate').innerText = trx.date;
-                document.getElementById('rTypeTitle').innerText = isRetur ? "STRUK RETUR PENUKARAN" : "Struk Pembayaran";
+            const receiptItems = document.getElementById('receiptItems');
+            receiptItems.innerHTML = '';
 
-                const receiptItems = document.getElementById('receiptItems');
-                receiptItems.innerHTML = '';
-
-                if (isRetur && trx.returnedItems) {
-                    receiptItems.innerHTML += `<tr><td colspan="3">[RETUR DIKEMBALIKAN]</td></tr>`;
-                    trx.returnedItems.forEach(item => {
-                        const itemCode = item.barcode ? `[${item.barcode}] ` : '';
-                        receiptItems.innerHTML += `
-                            <tr>
-                                <td>${itemCode}${item.name}</td>
-                                <td style="text-align: center;">${item.qty}</td>
-                                <td style="text-align: right;">-${(item.price * item.qty).toLocaleString('id-ID')}</td>
-                            </tr>
-                        `;
-                    });
-                    receiptItems.innerHTML += `<tr><td colspan="3">[BARANG PENGGANTI]</td></tr>`;
-                }
-
-                trx.items.forEach(item => {
-                    const origSubtotal = item.price * item.qty;
-                    const disc = parseFloat(item.discountValue) || 0;
-                    const finalSubtotal = origSubtotal - disc;
-
+            if (isRetur && trx.returnedItems) {
+                receiptItems.innerHTML += `<tr><td colspan="3">[RETUR DIKEMBALIKAN]</td></tr>`;
+                trx.returnedItems.forEach(item => {
                     const itemCode = item.barcode ? `[${item.barcode}] ` : '';
-                    let itemText = itemCode + item.name;
-                    if (disc > 0) {
-                        itemText += '<br><small style="color:#555;">(Disc: -Rp ' + disc.toLocaleString('id-ID') + ')</small>';
-                    }
-
                     receiptItems.innerHTML += `
                         <tr>
-                            <td>${itemText}</td>
+                            <td>${itemCode}${item.name}</td>
                             <td style="text-align: center;">${item.qty}</td>
-                            <td style="text-align: right;">${finalSubtotal.toLocaleString('id-ID')}</td>
+                            <td style="text-align: right;">-${(item.price * item.qty).toLocaleString('id-ID')}</td>
                         </tr>
                     `;
                 });
+                receiptItems.innerHTML += `<tr><td colspan="3">[BARANG PENGGANTI]</td></tr>`;
+            }
 
-                document.getElementById('rTotal').innerText = "Rp " + (trx.total || 0).toLocaleString('id-ID');
-                document.getElementById('rPay').innerText = "Rp " + (trx.pay || 0).toLocaleString('id-ID');
-                document.getElementById('rChange').innerText = "Rp " + (trx.change || 0).toLocaleString('id-ID');
+            trx.items.forEach(item => {
+                const origSubtotal = item.price * item.qty;
+                const disc = parseFloat(item.discountValue) || 0;
+                const finalSubtotal = origSubtotal - disc;
 
+                const itemCode = item.barcode ? `[${item.barcode}] ` : '';
+                let itemText = itemCode + item.name;
+                if (disc > 0) {
+                    itemText += '<br><small style="color:#555;">(Disc: -Rp ' + disc.toLocaleString('id-ID') + ')</small>';
+                }
+
+                receiptItems.innerHTML += `
+                    <tr>
+                        <td>${itemText}</td>
+                        <td style="text-align: center;">${item.qty}</td>
+                        <td style="text-align: right;">${finalSubtotal.toLocaleString('id-ID')}</td>
+                    </tr>
+                `;
+            });
+
+            document.getElementById('rTotal').innerText = "Rp " + (trx.total || 0).toLocaleString('id-ID');
+            document.getElementById('rPay').innerText = "Rp " + (trx.pay || 0).toLocaleString('id-ID');
+            document.getElementById('rChange').innerText = "Rp " + (trx.change || 0).toLocaleString('id-ID');
+
+            // 2. Coba cetak via Web Serial API jika tersambung
+            let printedViaSerial = false;
+            if (serialPort && serialWriter) {
+                const rawText = buildEscPosReceiptText(trx, isRetur);
+                printedViaSerial = await printRawEscPos(rawText);
+            }
+
+            // 3. Fallback: Jika printer serial tidak tersambung/gagal, gunakan window.print() biasa
+            if (!printedViaSerial) {
                 window.print();
             }
         }
@@ -2164,7 +2152,7 @@
             `;
         }
 
-        /* --- FITUR ANALISIS DATA (BERDASARKAN KODE BARCODE SAJA & DILENGKAPI FILTER) --- */
+        /* --- FITUR ANALISIS DATA --- */
         function renderAnalytics() {
             const filteredAnalytics = getFilteredAnalyticsHistory();
 
@@ -2184,13 +2172,11 @@
             filteredAnalytics.forEach(trx => {
                 totalOmset += trx.total || 0;
 
-                // Kasir Stat
                 const c = trx.cashier || 'Unknown';
                 if (!cashierMap[c]) cashierMap[c] = { count: 0, omset: 0 };
                 cashierMap[c].count += 1;
                 cashierMap[c].omset += trx.total || 0;
 
-                // Produk Stat (Diindeks berdasarkan Barcode)
                 trx.items.forEach(item => {
                     const barcode = normalizeBarcode(item.barcode) || 'NO_BARCODE';
                     const name = item.name || 'Unknown';
@@ -2208,11 +2194,9 @@
                 });
             });
 
-            // Hitung Rata-rata Transaksi
             const avgTrx = Math.round(totalOmset / filteredAnalytics.length);
             document.getElementById('analyticsAvgTrx').innerText = 'Rp ' + avgTrx.toLocaleString('id-ID');
 
-            // Top Products Array (Berdasarkan Qty Terbanyak)
             const topProducts = Object.keys(productMap).map(b => productMap[b]).sort((a, b) => b.qty - a.qty);
 
             if (topProducts.length > 0) {
@@ -2222,7 +2206,6 @@
                 document.getElementById('analyticsTopProduct').innerText = '-';
             }
 
-            // Top Cashier Array
             const cashierStats = Object.keys(cashierMap).map(c => ({
                 name: c,
                 count: cashierMap[c].count,
@@ -2235,7 +2218,6 @@
                 document.getElementById('analyticsTopCashier').innerText = '-';
             }
 
-            // Render Tabel Top 5 Produk Terlaris
             const topProdTbody = document.getElementById('topProductsTable');
             topProdTbody.innerHTML = '';
             topProducts.slice(0, 5).forEach(p => {
@@ -2250,7 +2232,6 @@
                 `;
             });
 
-            // Render Tabel Performa Kasir
             const cashierTbody = document.getElementById('cashierPerformanceTable');
             cashierTbody.innerHTML = '';
             cashierStats.forEach(c => {
